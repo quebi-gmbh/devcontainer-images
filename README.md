@@ -25,7 +25,8 @@ GHCR packages are **public**, so pulls need no `docker login`.
 ## How identical is it?
 
 **Functionally identical**, not byte-identical. Each image is built from the
-*same* upstream `Dockerfile` at a pinned commit, with the *same* devcontainer
+*same* upstream `Dockerfile` (at the commit `main` resolves to for that run),
+with the *same* devcontainer
 features (`common-utils`, `node`, `git`) at the *same* digests locked in
 upstream's `devcontainer-lock.json`, on the *same* Docker Hub `node` base. What
 differs from MCR's published bytes: apt may pull newer patch versions and build
@@ -45,15 +46,16 @@ rate limit blocks).
                   └─ tier 2 (needs tier 1)
 ```
 
-- **`chain.json`** — upstream repo + pinned SHA, the base mirror, the variant
-  list, the floating-tag aliases (`latest`, `22`, `bookworm`, …, matching
-  upstream's tag scheme), and the image chain (build order via `needs`).
-- **`scripts/build-image.sh`** — builds one image variant: fetches the pinned
+- **`chain.json`** — upstream repo + ref (default `main`), the base mirror, and
+  the image chain (build order via `needs`). **No variant/version/tag lists** —
+  those are read from upstream so we always track the latest release.
+- **`scripts/build-image.sh`** — builds one image variant: fetches the resolved
   upstream source, **patches the Dockerfile** (pin `VARIANT`, retarget the base
   `FROM` off MCR — and hard-fails if any `mcr.microsoft.com` reference survives),
   runs the devcontainer CLI to apply the locked features, pushes multi-arch
   (`amd64` + `arm64`), then adds the dated tag and floating aliases as GHCR→GHCR
-  copies.
+  copies. The aliases are derived from the image's `manifest.json`
+  (`variantTags` + `build.latest`), so nothing is hardcoded.
 - **`.github/workflows/build.yml`** — weekly (`cron`), on demand
   (`workflow_dispatch`, with `only_variant` / `platforms` inputs for cheap test
   runs), and on config changes. Authenticates to GHCR with the built-in
@@ -65,17 +67,25 @@ rate limit blocks).
 
 ## Variants & tags
 
-9 variants — `{20,22,24}-{trixie,bookworm,bullseye}` — per `chain.json`, each
-published as `:<node>-<distro>`, `:<node>-<distro>-<YYYYMMDD>` (pinnable), plus
-floating aliases (`latest`, `trixie`, `24`, `22`, `20`, `bookworm`, `bullseye`).
+The variant list, version, and aliases come entirely from upstream's
+`src/<image>/manifest.json` — **nothing is hardcoded here**. The `setup` job
+resolves `upstream.ref` (default `main`) to a commit once per run and reads each
+manifest's `variants`; the build script reads `variantTags` + `build.latest` for
+the aliases. Today that's `{20,22,24}-{trixie,bookworm,bullseye}` published as
+`:<node>-<distro>`, `:<node>-<distro>-<YYYYMMDD>` (pinnable), plus floating
+aliases (`latest`, `trixie`, `24`, `22`, `20`, `bookworm`, `bullseye`) — and it
+picks up new Node/Debian variants automatically when upstream adds them.
 
 ## Updating
 
-- **Track new upstream releases:** bump `upstream.sha` in `chain.json` (and the
-  feature digests follow from upstream's lock file). Pushing to `main` rebuilds.
+- **New upstream releases are picked up automatically:** the weekly run resolves
+  `main` and reads the current manifests, so new variants/versions flow through
+  with no edits. To pin instead, set `upstream.ref` in `chain.json` to a tag or
+  commit SHA.
 - **Add an image family** (e.g. `python`, `go`): add an entry to `images` in
-  `chain.json` and a matching matrix job in `build.yml`. If it depends on another
-  image, set `needs` and wire the job ordering.
+  `chain.json` and a matching matrix job in `build.yml` (its variants come from
+  that family's manifest automatically). If it depends on another image, set
+  `needs` and wire the job ordering.
 
 ## Testing a change cheaply
 

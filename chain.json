@@ -1,24 +1,10 @@
 {
-  "_comment": "Build config for rebuilding devcontainer images from upstream source (escaping MCR). Variants and alias tags mirror upstream's manifest.json tag scheme so our GHCR tags drop-in for the MCR ones. Bump upstream.sha to track new upstream releases (Renovate-friendly).",
+  "_comment": "Build config for rebuilding devcontainer images from upstream source (escaping MCR). Variants, version, and alias tags are NOT listed here — they're read from each image's upstream src/<src>/manifest.json so we always track the most recent upstream release. The setup job resolves upstream.ref to a commit once per run (logged), and every job in the run uses that exact commit for consistency.",
   "upstream": {
     "repo": "devcontainers/images",
-    "sha": "a810d5ce54b478bd5f5e1b37d7cc771f6f5bf496"
+    "ref": "main"
   },
   "baseMirror": "mirror.gcr.io/library",
-  "variants": [
-    "24-trixie", "22-trixie", "20-trixie",
-    "24-bookworm", "22-bookworm", "20-bookworm",
-    "24-bullseye", "22-bullseye", "20-bullseye"
-  ],
-  "aliases": {
-    "latest": "24-trixie",
-    "trixie": "24-trixie",
-    "24": "24-trixie",
-    "22": "22-trixie",
-    "20": "20-trixie",
-    "bookworm": "24-bookworm",
-    "bullseye": "24-bullseye"
-  },
   "images": [
     {
       "src": "javascript-node",

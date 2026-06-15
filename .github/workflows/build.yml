@@ -38,20 +38,50 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
+      sha: ${{ steps.v.outputs.sha }}
       variants: ${{ steps.v.outputs.variants }}
       date: ${{ steps.v.outputs.date }}
       platforms: ${{ steps.v.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
       - id: v
+        env:
+          ONLY_VARIANT: ${{ inputs.only_variant }}
         run: |
-          if [ -n "${{ inputs.only_variant }}" ]; then
-            echo "variants=[\"${{ inputs.only_variant }}\"]" >> "$GITHUB_OUTPUT"
-          else
-            echo "variants=$(jq -c .variants chain.json)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          repo=$(jq -r .upstream.repo chain.json)
+          ref=$(jq -r .upstream.ref chain.json)
+          # Resolve the ref to a commit ONCE so every job in this run agrees,
+          # while still tracking the most recent upstream across runs.
+          sha=$(git ls-remote "https://github.com/${repo}.git" "$ref" | cut -f1)
+          [ -n "$sha" ] || { echo "::error::could not resolve ${repo}@${ref}"; exit 1; }
+          echo "resolved ${repo}@${ref} -> ${sha}"
+
+          # Shallow-fetch that commit to read each image's manifest.json, which
+          # is the source of truth for the variant list (nothing hardcoded).
+          tmp=$(mktemp -d)
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "https://github.com/${repo}.git"
+          git -C "$tmp" -c protocol.version=2 fetch -q --depth 1 origin "$sha"
+          git -C "$tmp" checkout -q FETCH_HEAD
+
+          map='{}'
+          for src in $(jq -r '.images[].src' chain.json); do
+            vs=$(jq -c '.variants' "$tmp/src/$src/manifest.json")
+            map=$(echo "$map" | jq -c --arg s "$src" --argjson v "$vs" '. + {($s): $v}')
+          done
+          # workflow_dispatch can restrict to a single variant for cheap tests.
+          if [ -n "${ONLY_VARIANT}" ]; then
+            map=$(echo "$map" | jq -c --arg v "$ONLY_VARIANT" 'map_values([$v])')
           fi
-          echo "platforms=${{ inputs.platforms || 'linux/amd64,linux/arm64' }}" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "variants: $map"
+
+          {
+            echo "sha=$sha"
+            echo "variants=$map"
+            echo "platforms=${{ inputs.platforms || 'linux/amd64,linux/arm64' }}"
+            echo "date=$(date -u +%Y%m%d)"
+          } >> "$GITHUB_OUTPUT"
 
   # Tier 1: FROM Docker Hub node (via mirror.gcr.io) — no dependency.
   javascript-node:
@@ -61,7 +91,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        variant: ${{ fromJson(needs.setup.outputs.variants) }}
+        variant: ${{ fromJson(needs.setup.outputs.variants)['javascript-node'] }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -74,6 +104,7 @@ jobs:
       - name: Build javascript-node:${{ matrix.variant }}
         env:
           OWNER: ${{ github.repository_owner }}
+          UP_SHA: ${{ needs.setup.outputs.sha }}
           PLATFORMS: ${{ needs.setup.outputs.platforms }}
           BUILD_DATE: ${{ needs.setup.outputs.date }}
         run: scripts/build-image.sh javascript-node "${{ matrix.variant }}" devcontainer-javascript-node dockerhub-node
@@ -86,7 +117,7 @@ jobs:
       fail-fast: false
       max-parallel: 3
       matrix:
-        variant: ${{ fromJson(needs.setup.outputs.variants) }}
+        variant: ${{ fromJson(needs.setup.outputs.variants)['typescript-node'] }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -99,6 +130,7 @@ jobs:
       - name: Build typescript-node:${{ matrix.variant }}
         env:
           OWNER: ${{ github.repository_owner }}
+          UP_SHA: ${{ needs.setup.outputs.sha }}
           PLATFORMS: ${{ needs.setup.outputs.platforms }}
           BUILD_DATE: ${{ needs.setup.outputs.date }}
         run: scripts/build-image.sh typescript-node "${{ matrix.variant }}" devcontainer-typescript-node javascript-node

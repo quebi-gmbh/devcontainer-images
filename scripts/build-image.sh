@@ -29,7 +29,11 @@ PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 CFG="chain.json"
 BASE_MIRROR="$(jq -r .baseMirror "$CFG")"
 UP_REPO="$(jq -r .upstream.repo "$CFG")"
-UP_SHA="$(jq -r .upstream.sha "$CFG")"
+# Commit to build from. CI resolves upstream.ref once and passes it in via
+# UP_SHA so every job in a run is consistent; fall back to resolving the ref
+# here for standalone local runs.
+UP_SHA="${UP_SHA:-$(git ls-remote "https://github.com/${UP_REPO}.git" "$(jq -r .upstream.ref "$CFG")" | cut -f1)}"
+[ -n "$UP_SHA" ] || { echo "::error::could not resolve upstream commit"; exit 1; }
 DEST="ghcr.io/${OWNER}/${NAME}"
 # Build-date suffix for a pinnable/rollbackable tag. Passed in by CI for
 # reproducibility across a run; falls back to today if unset.
@@ -89,7 +93,15 @@ add_tag() { docker buildx imagetools create --tag "${DEST}:$1" "${DEST}:${VARIAN
 echo "tagging ${DEST}:${VARIANT}-${DATE}"
 add_tag "${VARIANT}-${DATE}"
 
-for key in $(jq -r --arg v "$VARIANT" '.aliases | to_entries[] | select(.value==$v) | .key' "$CFG"); do
+# Floating aliases come straight from upstream's manifest (variantTags, minus the
+# "<image>:${VERSION}-" prefix) plus "latest" for the variant upstream marks as
+# latest — so our tag scheme tracks upstream with nothing hardcoded here.
+manifest="$work/src/$SRC/manifest.json"
+aliases="$(jq -r --arg v "$VARIANT" '.build.variantTags[$v][]?' "$manifest" | sed -E 's/.*\$\{VERSION\}-//')"
+[ "$(jq -r '.build.latest' "$manifest")" = "$VARIANT" ] && aliases="${aliases}"$'\n'"latest"
+
+for key in $aliases; do
+  [ -n "$key" ] || continue
   echo "alias ${DEST}:${key} -> ${VARIANT}"
   add_tag "$key"
 done
