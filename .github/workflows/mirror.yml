@@ -43,6 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # Throttle pulls from MCR — firing all builds at once bursts MCR's
+      # anonymous token endpoint and trips its per-IP 429 rate limit (the very
+      # thing this repo exists to avoid). Thin passthrough builds are fast, so
+      # serializing them costs only a few minutes on a weekly job.
+      max-parallel: 1
       matrix:
         image: ${{ fromJson(needs.matrix.outputs.images) }}
     steps:
