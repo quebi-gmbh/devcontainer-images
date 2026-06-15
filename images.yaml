@@ -1,0 +1,36 @@
+# Images to mirror into ghcr.io/quebi-gmbh/<name>:<tag>.
+#
+# These devcontainer images live on MCR (mcr.microsoft.com), NOT Docker Hub —
+# hub.docker.com/r/microsoft/devcontainers is effectively empty. MCR's
+# /v2/<namespace>/<repo>/tags/list endpoint is the source of truth, and
+# scripts/discover.py scrapes it to build the weekly rebuild matrix.
+#
+# Tag selection: a tag is mirrored only if it matches `include` (full match)
+# and matches NONE of the `exclude` patterns (search). Per-repo values override
+# the `defaults`. The defaults keep only "rolling/latest" tags — the ones that
+# always repoint at the newest build — and drop version pins and EOL variants:
+#   * dotted versions ......... 4.0.10-22-bookworm   (a frozen patch release)
+#   * image-version prefixes .. 4-22-bookworm, dev-22 (pinned to image v4 / dev)
+#   * EOL Debian .............. *-buster
+#   * EOL Node ................ 0/14/16/18(-*)
+# What survives for typescript-node: latest, bookworm, bullseye, trixie,
+#   20/22/24, and 20|22|24-(bookworm|bullseye|trixie) — ~16 tags that
+#   auto-extend when Node 26 or the next Debian suite ships. No manual edits.
+
+registry: mcr.microsoft.com
+namespace: devcontainers
+
+defaults:
+  include: '.+'
+  exclude:
+    - '\.'              # dotted version pins (x.y / x.y.z)
+    - '^dev-'           # pre-release / dev channel
+    - '^\d-'            # image-version prefix (0-/1-/2-/3-/4-) — Node majors are >= 14
+    - 'buster'          # EOL Debian
+    - '^(0|14|16|18)(-|$)'  # EOL Node majors
+
+repos:
+  - repo: typescript-node
+    name: devcontainer-typescript-node
+    # Inherits the defaults above. To mirror more/less, add `include:` / `exclude:`
+    # here. Add more entries below to mirror other families (python, go, base, ...).
